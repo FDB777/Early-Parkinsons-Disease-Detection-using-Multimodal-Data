@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}Data Upload - PD Predictor{% endblock %}
+{% block body_class %}predict-page{% endblock %}
+
+{% block content %}
+{% macro label_for(code) %}{{ "Parkinson's" if code == "PD" else "Healthy" }}{% endmacro %}
+{% macro pct(value) %}{{ '%.2f'|format(value * 100) }}%{% endmacro %}
+{% set uploads = [
+  {
+    "name": "voice",
+    "label_id": "voice-name",
+    "section_icon": "&#127908;",
+    "drop_icon": "&#127911;",
+    "title": "Voice Data Input",
+    "description": "Upload a WAV voice recording for acoustic feature analysis",
+    "accept": ".wav",
+    "tag": "Accepted: .wav"
+  },
+  {
+    "name": "handwriting",
+    "label_id": "hw-name",
+    "section_icon": "&#9997;",
+    "drop_icon": "&#128444;",
+    "title": "Handwriting Data Input",
+    "description": "Upload a handwriting sample image for motor function analysis",
+    "accept": ".jpg,.jpeg,.png,.nii",
+    "tag": "Accepted: .jpg .jpeg .png .nii"
+  },
+  {
+    "name": "mri",
+    "label_id": "mri-name",
+    "section_icon": "&#129504;",
+    "drop_icon": "&#128300;",
+    "title": "MRI Data Input",
+    "description": "Upload an MRI slice image for structural analysis",
+    "accept": ".jpg,.jpeg,.png,.nii,.nii.gz",
+    "tag": "Accepted: .jpg .jpeg .png .nii .nii.gz"
+  }
+] %}
+
+<div class="predict-wrap">
+  <div class="page-header">
+    <div class="tag">Step 1 of 1</div>
+    <h1>Parkinson's Data Upload</h1>
+    <p>Upload any modality (voice, handwriting, MRI). Prediction uses only what you provide.</p>
+  </div>
+
+  <div class="upload-section">
+    <div class="upload-header">
+      <div class="upload-icon">DB</div>
+      <h3>Database Link Status</h3>
+    </div>
+    {% if status and status.has_input %}
+      <p>
+        user.user_id -> processed_input.input_id ({{ status.input_id }})<br>
+        processed_voice: {{ "Connected" if status.has_voice else "Missing" }} |
+        processed_handwriting: {{ "Connected" if status.has_handwriting else "Missing" }} |
+        processed_mri: {{ "Connected" if status.has_mri else "Missing" }}
+      </p>
+    {% else %}
+      <p>No uploaded record yet for this user. Upload once to create links across tables.</p>
+    {% endif %}
+  </div>
+
+  <form method="POST" action="{{ url_for('predict') }}" enctype="multipart/form-data">
+    {% for item in uploads %}
+    <div class="upload-section">
+      <div class="upload-header">
+        <div class="upload-icon">{{ item.section_icon|safe }}</div>
+        <h3>{{ item.title }}</h3>
+      </div>
+      <p>{{ item.description }}</p>
+      <div class="file-drop" id="drop-{{ item.name }}">
+        <input type="file" name="{{ item.name }}" accept="{{ item.accept }}" onchange="showName(this,'{{ item.label_id }}')"/>
+        <div class="drop-icon">{{ item.drop_icon|safe }}</div>
+        <div class="drop-label"><span>Choose file</span> or drag &amp; drop here</div>
+        <div class="file-name" id="{{ item.label_id }}"></div>
+      </div>
+      <span class="format-tag">{{ item.tag }}</span>
+      {% if item.name == "handwriting" %}
+      <div style="margin-top: 12px; padding: 10px; border: 1px dashed #bbb; border-radius: 10px;">
+        <p style="margin: 0 0 8px 0;"><strong>Template:</strong> Download and trace this spiral pattern.</p>
+        <a
+          href="{{ url_for('static', filename='templates/handwriting_spiral_template.jpg') }}"
+          download="handwriting_spiral_template.jpg"
+        >
+          Download Template
+        </a>
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+
+    <div class="submit-card">
+      <p>At least one modality is required. Report will include only uploaded modalities.</p>
+      <button type="submit" class="btn-predict">Run Prediction</button>
+    </div>
+  </form>
+
+  {% if result %}
+  <div class="upload-section">
+    <div class="upload-header">
+      <div class="upload-icon">AI</div>
+      <h3>Latest Prediction Result</h3>
+    </div>
+    <p>
+      Input ID: {{ result.input_id }}<br>
+      {% if result.voice_label %}
+      Voice: <strong>{{ label_for(result.voice_label) }}</strong> ({{ pct(result.voice_prob) }})<br>
+      {% endif %}
+      {% if result.hand_label %}
+      Handwriting: <strong>{{ label_for(result.hand_label) }}</strong> ({{ pct(result.hand_prob) }})<br>
+      {% endif %}
+      {% if result.mri_label %}
+      MRI: <strong>{{ label_for(result.mri_label) }}</strong> ({{ pct(result.mri_prob) }})<br>
+      {% endif %}
+      Ensemble: <strong>{{ label_for(result.final_label) }}</strong> ({{ pct(result.final_confidence) }})
+    </p>
+    {% if result.mri_visual_rel %}
+      <img
+        src="{{ url_for('static', filename=result.mri_visual_rel) }}"
+        alt="MRI occlusion sensitivity overlay"
+        style="max-width: 420px; width: 100%; border-radius: 12px; margin-top: 10px;"
+      />
+    {% endif %}
+    <p style="margin-top: 12px;">
+      <a href="{{ url_for('report') }}"><strong>Open Detailed Report</strong></a>
+    </p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block page_scripts %}
+<script src="{{ url_for('static', filename='js/predict.js') }}"></script>
+{% endblock %}
+

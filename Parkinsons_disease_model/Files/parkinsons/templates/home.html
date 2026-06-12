@@ -1,0 +1,54 @@
+﻿{% extends "base.html" %}
+{% block title %}Home - Parkinson's Disease Predictor{% endblock %}
+
+{% block content %}
+{% macro feature_card(icon, title, body) %}
+  <div class="feat-card">
+    <div class="feat-icon">{{ icon|safe }}</div>
+    <h3>{{ title }}</h3>
+    <p>{{ body }}</p>
+  </div>
+{% endmacro %}
+<section class="hero">
+  <div class="hero-grid">
+    <div>
+      <div class="hero-badge">&#129504; AI-Powered Detection</div>
+      <h1>Early Detection of <span>Parkinson's</span> Disease</h1>
+      <p>
+        Upload voice samples, handwriting images, and MRI scans to receive an
+        AI-assisted risk assessment. Fast, private, and built for research.
+      </p>
+      <div class="hero-cta">
+        <a href="{{ url_for('predict') }}" class="btn-hero btn-hero-primary">Get Started -&gt;</a>
+        <a href="#how" class="btn-hero btn-hero-outline">How It Works</a>
+      </div>
+    </div>
+    <div class="hero-visual">
+      <div class="brain-card">
+        <div class="brain-card-icon"><img src="{{ url_for('static', filename='logo.png') }}" alt="Logo" style="height:120px;width:auto;display:block;margin:0 auto;" /></div>
+        <div class="stat-row">
+          <div class="stat-box"><div class="num">3</div><div class="lbl">Data Inputs</div></div>
+          <div class="stat-box"><div class="num">87%</div><div class="lbl">Accuracy</div></div>
+        </div>
+        <div class="prog-lbl"><span>Prediction Confidence</span><span>87%</span></div>
+        <div class="progress-bar-wrap"><div class="progress-bar-fill"></div></div>
+        <div style="text-align:center;margin-top:1rem;">
+          <span style="background:rgba(46,196,182,.2);color:var(--teal);padding:.3rem .8rem;border-radius:20px;font-size:.8rem;">OK Low Risk</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="features" id="how">
+  <div class="features-inner">
+    <div class="section-tag">How It Works</div>
+    <div class="section-title">Three Inputs. One Smart Assessment.</div>
+    <div class="feat-grid">
+      {{ feature_card('&#127908;', 'Voice Analysis', "Upload a short voice recording. Our model analyses vocal tremors and dysphonia patterns linked to Parkinson's.") }}
+      {{ feature_card('&#9997;', 'Handwriting Analysis', "A handwriting sample reveals micro-motor irregularities, an early, reliable biomarker for the disease.") }}
+      {{ feature_card('&#129504;', 'MRI Scan Review', "Brain MRI images are scanned for neurological patterns associated with dopaminergic changes.") }}
+    </div>
+  </div>
+</section>
+{% endblock %}

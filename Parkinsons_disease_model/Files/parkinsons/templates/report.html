@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}Prediction Report - PD Predictor{% endblock %}
+{% block body_class %}predict-page{% endblock %}
+
+{% block content %}
+{% macro label_for(code) %}{{ "Parkinson's" if code == "PD" else "Healthy" }}{% endmacro %}
+{% macro pct(value) %}{{ '%.2f'|format(value * 100) }}%{% endmacro %}
+<div class="predict-wrap">
+  <div class="page-header">
+    <div class="tag">Clinical Summary</div>
+    <h1>Parkinson's Prediction Report</h1>
+    <p>User details, modality predictions, confidence scores, and MRI visual explanations.</p>
+  </div>
+
+  <div class="upload-section">
+    <div class="upload-header">
+      <div class="upload-icon">ID</div>
+      <h3>Patient Details</h3>
+    </div>
+    <p>
+      User ID: {{ report.user.user_id }}<br>
+      Name: {{ report.user.name }}<br>
+      Email: {{ report.user.email }}<br>
+      Age: {{ report.user.age }}
+    </p>
+  </div>
+
+  <div class="upload-section">
+    <div class="upload-header">
+      <div class="upload-icon">AI</div>
+      <h3>Prediction Summary</h3>
+    </div>
+    <p>
+      Input ID: {{ report.input_id }}<br>
+      Prediction ID: {{ report.prediction_id }}<br>
+      {% if report.voice_label %}
+      Voice: <strong>{{ label_for(report.voice_label) }}</strong> ({{ pct(report.voice_confidence) }})<br>
+      {% endif %}
+      {% if report.hand_label %}
+      Handwriting: <strong>{{ label_for(report.hand_label) }}</strong> ({{ pct(report.hand_confidence) }})<br>
+      {% endif %}
+      {% if report.mri_label %}
+      MRI: <strong>{{ label_for(report.mri_label) }}</strong> ({{ pct(report.mri_confidence) }})<br>
+      {% endif %}
+      Final Ensemble: <strong>{{ label_for(report.final_label) }}</strong> ({{ pct(report.final_confidence) }})
+    </p>
+    {% if report.report_summary %}
+      <p><strong>Report Summary:</strong> {{ report.report_summary }}</p>
+    {% endif %}
+    {% if report.report_pdf_rel %}
+      <p style="margin-top: 10px;">
+        <a href="{{ url_for('static', filename=report.report_pdf_rel) }}" target="_blank">
+          <strong>Download Auto-Generated PDF Report</strong>
+        </a>
+      </p>
+    {% endif %}
+
+    <table style="width:100%; border-collapse: collapse; margin-top: 12px;">
+      <thead>
+        <tr>
+          <th style="text-align:left; border-bottom:1px solid #ccc; padding:8px;">Model</th>
+          <th style="text-align:left; border-bottom:1px solid #ccc; padding:8px;">Label</th>
+          <th style="text-align:left; border-bottom:1px solid #ccc; padding:8px;">Confidence</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if report.voice_label %}
+        <tr>
+          <td style="padding:8px; border-bottom:1px solid #eee;">Voice</td>
+          <td style="padding:8px; border-bottom:1px solid #eee;"><strong>{{ label_for(report.voice_label) }}</strong></td>
+          <td style="padding:8px; border-bottom:1px solid #eee;">{{ '%.4f'|format(report.voice_confidence) }}</td>
+        </tr>
+        {% endif %}
+        {% if report.hand_label %}
+        <tr>
+          <td style="padding:8px; border-bottom:1px solid #eee;">Handwriting</td>
+          <td style="padding:8px; border-bottom:1px solid #eee;"><strong>{{ label_for(report.hand_label) }}</strong></td>
+          <td style="padding:8px; border-bottom:1px solid #eee;">{{ '%.4f'|format(report.hand_confidence) }}</td>
+        </tr>
+        {% endif %}
+        {% if report.mri_label %}
+        <tr>
+          <td style="padding:8px; border-bottom:1px solid #eee;">MRI</td>
+          <td style="padding:8px; border-bottom:1px solid #eee;"><strong>{{ label_for(report.mri_label) }}</strong></td>
+          <td style="padding:8px; border-bottom:1px solid #eee;">{{ '%.4f'|format(report.mri_confidence) }}</td>
+        </tr>
+        {% endif %}
+        <tr>
+          <td style="padding:8px; border-bottom:1px solid #eee;">Final Ensemble</td>
+          <td style="padding:8px; border-bottom:1px solid #eee;"><strong>{{ label_for(report.final_label) }}</strong></td>
+          <td style="padding:8px; border-bottom:1px solid #eee;"><strong>{{ '%.4f'|format(report.final_confidence) }}</strong></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="upload-section">
+    <div class="upload-header">
+      <div class="upload-icon">FN</div>
+      <h3>Final Note</h3>
+    </div>
+    <p style="font-size: 1.05rem;">
+      {% if report.final_label == "PD" %}
+      <strong>You are probably having Parkinson's.</strong>
+      {% else %}
+      <strong>You are probably healthy.</strong>
+      {% endif %}
+    </p>
+  </div>
+  <div class="upload-section">
+    <div class="upload-header">
+      <div class="upload-icon">VU</div>
+      <h3>Voice Feature Values</h3>
+    </div>
+    {% if report.voice_label and report.voice_features %}
+      <table style="width:100%; border-collapse: collapse; margin-top: 8px;">
+        <thead>
+          <tr>
+            <th style="text-align:left; border-bottom:1px solid #ccc; padding:8px;">Feature</th>
+            <th style="text-align:left; border-bottom:1px solid #ccc; padding:8px;">Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for key, value in report.voice_features|dictsort %}
+          <tr>
+            <td style="padding:8px; border-bottom:1px solid #eee;">{{ key }}</td>
+            <td style="padding:8px; border-bottom:1px solid #eee;">{{ '%.6f'|format(value) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p>No voice feature values for this report.</p>
+    {% endif %}
+  </div>
+
+  <div class="upload-section">
+    <div class="upload-header">
+      <div class="upload-icon">MRI</div>
+      <h3>MRI Explanation Images</h3>
+    </div>
+
+    {% if report.mri_label and report.occlusion_rel %}
+      <img
+        src="{{ url_for('static', filename=report.occlusion_rel) }}"
+        alt="MRI occlusion sensitivity output"
+        style="max-width: 520px; width: 100%; border-radius: 12px; margin-top: 8px;"
+      />
+      <p><strong>Caption:</strong> {{ report.occlusion_caption }}</p>
+    {% endif %}
+
+    {% if report.mri_label and report.template_rel %}
+      <img
+        src="{{ url_for('static', filename=report.template_rel) }}"
+        alt="MRI PD template partition output"
+        style="max-width: 520px; width: 100%; border-radius: 12px; margin-top: 14px;"
+      />
+      <p><strong>Caption:</strong> {{ report.template_caption }}</p>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}

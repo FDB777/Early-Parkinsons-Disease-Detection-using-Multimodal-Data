@@ -1,0 +1,36 @@
+﻿{% extends "base.html" %}
+{% block title %}Log In - PD Predictor{% endblock %}
+{% block body_class %}auth-page{% endblock %}
+
+{% block content %}
+{% macro brand_block(title, subtitle) %}
+  <div class="brand">
+    <img src="{{ url_for('static', filename='logo.png') }}" alt="Logo" style="height:60px; width:auto;" />
+    <h2>{{ title }}</h2>
+    <p>{{ subtitle }}</p>
+  </div>
+{% endmacro %}
+<div class="auth-wrap">
+  <div class="auth-card login">
+    {{ brand_block('Welcome Back', 'Log in to access the prediction tool') }}
+
+    <form method="POST" action="{{ url_for('login') }}">
+      <div class="form-group">
+        <label>Email Address</label>
+        <input type="email" name="email" placeholder="you@example.com" required />
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" name="password" placeholder="Enter password" required />
+      </div>
+      <div class="forgot"><a href="#">Forgot Password?</a></div>
+      <button type="submit" class="btn-primary">Log In -&gt;</button>
+    </form>
+
+    <div class="divider">or</div>
+    <div class="auth-footer">
+      New here? <a href="{{ url_for('signup') }}">Create an account</a>
+    </div>
+  </div>
+</div>
+{% endblock %}

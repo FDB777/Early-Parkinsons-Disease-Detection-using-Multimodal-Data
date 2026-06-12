@@ -1,0 +1,53 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>{% block title %}Parkinson's Disease Predictor{% endblock %}</title>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}"/>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/pages.css') }}"/>
+  {% block head %}{% endblock %}
+</head>
+<body class="{% block body_class %}{% endblock %}">
+
+{% macro nav_link(endpoint, label, extra_class='') %}
+  <a href="{{ url_for(endpoint) }}" {% if request.endpoint==endpoint %}class="active {{ extra_class }}"{% elif extra_class %}class="{{ extra_class }}"{% endif %}>{{ label }}</a>
+{% endmacro %}
+
+<nav>
+  <a href="{{ url_for('home') }}" class="nav-brand">
+    <img src="{{ url_for('static', filename='logo.png') }}" alt="PD Predictor Logo" style="height:40px; width:auto;" />
+    <span>PD Predictor</span>
+  </a>
+  <div class="nav-links">
+    {{ nav_link('home', 'Home') }}
+    {{ nav_link('predict', 'Predict') }}
+    {% if session.user %}
+      {{ nav_link('report', 'Report') }}
+      <a href="{{ url_for('logout') }}">Log Out</a>
+    {% else %}
+      {{ nav_link('login', 'Log In') }}
+      {{ nav_link('signup', 'Sign Up', 'btn-nav') }}
+    {% endif %}
+  </div>
+</nav>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    <div class="flash-wrap">
+      {% for cat, msg in messages %}
+        <div class="flash {{ cat }}">{{ msg }}</div>
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endwith %}
+
+{% block content %}{% endblock %}
+
+<footer>
+  Note: This system is for educational and research purposes only and does not replace medical diagnosis.
+</footer>
+{% block page_scripts %}{% endblock %}
+</body>
+</html>
