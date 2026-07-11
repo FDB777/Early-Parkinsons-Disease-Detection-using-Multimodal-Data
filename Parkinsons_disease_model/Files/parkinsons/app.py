@@ -217,7 +217,7 @@ def init_db():
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
 
-            CREATE TABLE IF NOT EXISTS report (
+                CREATE TABLE IF NOT EXISTS report (
                 user_id INTEGER PRIMARY KEY,
                 prediction_id INTEGER,
                 report_summary TEXT,
@@ -228,22 +228,23 @@ def init_db():
             );
             """
         )
+
+        # Create default user before closing the database connection
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO user
+            (user_id, name, email, age, password_hash)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (1, "Demo User", "you@example.com", 25, "1234")
+        )
+
         conn.commit()
+
     finally:
         conn.close()
-
-    cursor = conn.cursor()
-    
-    cursor.execute(
-        """
-        INSERT OR IGNORE INTO user
-        (user_id, name, email, age, password_hash)
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        (1, "Demo User", "you@example.com", 25, "1234")
-    )
-    
-    conn.commit()
     
 
 # Every TEMPORARY table (not `user`, not `model` -- those are permanent)
