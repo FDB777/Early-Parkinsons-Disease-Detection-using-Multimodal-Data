@@ -131,6 +131,7 @@ def init_db():
         purge_expired_temp_data below).
     """
     conn = get_db_connection()
+    conn.execute("PRAGMA foreign_keys = ON")
     try:
         conn.executescript(
             """
@@ -979,7 +980,10 @@ def get_or_create_processed_input(cursor, user_id: int) -> int:
     row = cursor.fetchone()
     if row:
         return row["input_id"]
+    cursor.execute("SELECT user_id FROM user")
+    print("EXISTING USERS:", cursor.fetchall())
 
+    print("INSERTING USER ID:", user_id)
     cursor.execute(
         """
         INSERT INTO processed_input (user_id, fused_feature_vector)
