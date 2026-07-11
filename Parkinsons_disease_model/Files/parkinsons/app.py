@@ -978,16 +978,29 @@ def predict_mri(mri_path: str, user_id: int) -> tuple[float, list[float], str, s
     )
 
 def get_or_create_processed_input(cursor, user_id: int) -> int:
-    cursor.execute("SELECT input_id FROM processed_input WHERE user_id = ?", (user_id,))
+    cursor.execute(
+        "SELECT input_id FROM processed_input WHERE user_id = ?",
+        (user_id,)
+    )
     row = cursor.fetchone()
+
     if row:
         return row["input_id"]
-    cursor.execute("SELECT user_id FROM user")
-    print("EXISTING USERS:", cursor.fetchall())
 
+    cursor.execute("SELECT user_id FROM user")
+    users = cursor.fetchall()
+
+    print("EXISTING USERS:", [dict(u) for u in users])
     print("INSERTING USER ID:", user_id)
-    if not any(row["user_id"] == user_id for row in users):
-        print("❌ USER ID DOES NOT EXIST IN user TABLE")
+
+    cursor.execute(
+        "SELECT user_id FROM user WHERE user_id = ?",
+        (user_id,)
+    )
+
+    matching_user = cursor.fetchone()
+    print("MATCHING USER:", dict(matching_user) if matching_user else None)
+
     cursor.execute(
         """
         INSERT INTO processed_input (user_id, fused_feature_vector)
@@ -995,6 +1008,7 @@ def get_or_create_processed_input(cursor, user_id: int) -> int:
         """,
         (user_id, compact_json({})),
     )
+
     return int(cursor.lastrowid)
 
 def get_or_create_model(cursor, model_name: str, model_type: str) -> int:
