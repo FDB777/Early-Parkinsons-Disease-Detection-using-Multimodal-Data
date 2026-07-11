@@ -238,7 +238,7 @@ def init_db():
             (user_id, name, email, age, password_hash)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (1, "Demo User", "you@example.com", 25, "1234")
+            (1, "Demo User", "you@example.com", 25, generate_password_hash("1234"))
         )
 
         conn.commit()
