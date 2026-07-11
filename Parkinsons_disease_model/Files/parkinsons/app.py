@@ -2,6 +2,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import importlib.util
 import json
+import traceback
 import os
 from pathlib import Path
 import re
@@ -132,6 +133,7 @@ def init_db():
     """
     conn = get_db_connection()
     conn.execute("PRAGMA foreign_keys = ON")
+    print("Foreign keys:", conn.execute("PRAGMA foreign_keys").fetchone())
     try:
         conn.executescript(
             """
@@ -984,6 +986,8 @@ def get_or_create_processed_input(cursor, user_id: int) -> int:
     print("EXISTING USERS:", cursor.fetchall())
 
     print("INSERTING USER ID:", user_id)
+    if not any(row["user_id"] == user_id for row in users):
+        print("❌ USER ID DOES NOT EXIST IN user TABLE")
     cursor.execute(
         """
         INSERT INTO processed_input (user_id, fused_feature_vector)
@@ -1813,6 +1817,7 @@ def predict():
                 conn.rollback()
             app.logger.exception("Prediction failed.")
             print("[PREDICT ERROR]", repr(exc))
+            traceback.print_exc()
             flash("Prediction failed due to an internal error. Please try again.", "error")
         finally:
             close_db(cursor, conn)
