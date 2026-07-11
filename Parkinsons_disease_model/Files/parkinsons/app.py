@@ -8,7 +8,7 @@ import re
 from typing import Any
 import cv2
 import joblib
-import mysql.connector
+import sqlite3
 import numpy as np
 import nibabel as nib
 import nolds
@@ -21,7 +21,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 from flask import Flask, flash, redirect, render_template, request, session, url_for
-from mysql.connector import Error
 from pyrpde import rpde
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.utils import ImageReader
@@ -36,11 +35,14 @@ app = Flask(__name__)
 app.secret_key = "dev-secret-key-change-if-needed"
 app.config["UPLOAD_FOLDER"] = "static/uploads"
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
-app.config["DB_HOST"] = os.getenv("DB_HOST", "127.0.0.1")
-app.config["DB_PORT"] = int(os.getenv("DB_PORT", "3306"))
-app.config["DB_USER"] = os.getenv("DB_USER", "root")
-app.config["DB_PASSWORD"] = os.getenv("DB_PASSWORD", "fdb7")
-app.config["DB_NAME"] = os.getenv("DB_NAME", "parkinsons")
+app.config["DB_PATH"] = os.getenv("DB_PATH", os.path.join(BASE_DIR, "app_data.db"))
+# How long temporary data (uploads, predictions, reports) is kept before
+# it's automatically deleted. User accounts are NEVER deleted by this.
+app.config["TEMP_DATA_MAX_AGE_SECONDS"] = int(os.getenv("TEMP_DATA_MAX_AGE_SECONDS", str(60 * 60)))  # 1 hour
+
+# sqlite3.Error plays the same role mysql.connector.Error used to -- this
+# alias means every existing "except Error as db_err:" block still works.
+Error = sqlite3.Error
 
 ALLOWED_AUDIO = {"wav"}
 ALLOWED_IMAGE = {"jpg", "jpeg", "png"}
@@ -89,14 +91,166 @@ MODALITY_DB_CONFIG = {
     },
 }
 
+def _dict_row_factory(cursor, row):
+    """Makes query results come back as plain dicts (row['email'], row.get('age'))
+    instead of tuples -- matches how mysql.connector's dictionary=True cursor
+    used to behave, which the rest of this file's code already expects."""
+    columns = [col[0] for col in cursor.description]
+    return dict(zip(columns, row))
+
+
 def get_db_connection():
-    return mysql.connector.connect(
-        host=app.config["DB_HOST"],
-        port=app.config["DB_PORT"],
-        user=app.config["DB_USER"],
-        password=app.config["DB_PASSWORD"],
-        database=app.config["DB_NAME"],
-    )
+    """
+    Opens a connection to our single SQLite database file. Unlike MySQL,
+    SQLite needs no host/port/username -- it's just a file on disk. Each
+    request gets its own connection (same pattern as before), which is
+    the safe way to use SQLite from a multi-request web app.
+    """
+    conn = sqlite3.connect(app.config["DB_PATH"])
+    conn.row_factory = _dict_row_factory
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+def init_db():
+    """
+    Creates every table if it doesn't already exist. Safe to call every
+    time the app starts -- it won't wipe existing data.
+
+    Tables are split into two groups:
+      - PERMANENT: `user` -- never auto-deleted.
+      - TEMPORARY: everything else (uploads, predictions, reports) --
+        each has a `created_at` column, and rows older than
+        TEMP_DATA_MAX_AGE_SECONDS get automatically deleted (see
+        purge_expired_temp_data below).
+    """
+    conn = get_db_connection()
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS user (
+                user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL UNIQUE,
+                age INTEGER,
+                password_hash TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS model (
+                model_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                model_name TEXT NOT NULL,
+                model_type TEXT NOT NULL,
+                model_status TEXT,
+                trained_date TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS processed_input (
+                input_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL UNIQUE,
+                fused_feature_vector TEXT,
+                processed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES user(user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS processed_voice (
+                voice_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                input_id INTEGER NOT NULL UNIQUE,
+                raw_voice_path TEXT,
+                feature_vector TEXT,
+                model_id INTEGER,
+                processed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS processed_handwriting (
+                handwriting_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                input_id INTEGER NOT NULL UNIQUE,
+                raw_handwriting_path TEXT,
+                raw_handwriting_mime TEXT,
+                feature_vector TEXT,
+                model_id INTEGER,
+                processed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS processed_mri (
+                mri_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                input_id INTEGER NOT NULL UNIQUE,
+                raw_mri_path TEXT,
+                raw_mri_mime TEXT,
+                processed_mri_path TEXT,
+                feature_vector TEXT,
+                model_id INTEGER,
+                processed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS modality_prediction (
+                input_id INTEGER NOT NULL,
+                model_id INTEGER,
+                modality_type TEXT NOT NULL,
+                predicted_label TEXT,
+                confidence_score REAL,
+                predicted_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (input_id, modality_type)
+            );
+
+            CREATE TABLE IF NOT EXISTS prediction (
+                prediction_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL UNIQUE,
+                input_id INTEGER NOT NULL,
+                model_id INTEGER,
+                prediction_result TEXT,
+                confidence_score REAL,
+                predicted_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS report (
+                user_id INTEGER PRIMARY KEY,
+                prediction_id INTEGER,
+                report_summary TEXT,
+                report_data TEXT,
+                report_pdf_path TEXT,
+                report_date TEXT DEFAULT CURRENT_TIMESTAMP,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# Every TEMPORARY table (not `user`, not `model` -- those are permanent)
+TEMP_TABLES = [
+    "processed_input", "processed_voice", "processed_handwriting",
+    "processed_mri", "modality_prediction", "prediction", "report",
+]
+
+
+def purge_expired_temp_data(conn=None):
+    """
+    Deletes any row in a temporary table older than TEMP_DATA_MAX_AGE_SECONDS.
+    User accounts (`user` table) are never touched by this.
+    Safe to call often -- it only ever deletes old rows, nothing else.
+    """
+    owns_connection = conn is None
+    if owns_connection:
+        conn = get_db_connection()
+    try:
+        cutoff_seconds = app.config["TEMP_DATA_MAX_AGE_SECONDS"]
+        for table_name in TEMP_TABLES:
+            conn.execute(
+                f"DELETE FROM {table_name} WHERE created_at < datetime('now', ?)",
+                (f"-{cutoff_seconds} seconds",),
+            )
+        conn.commit()
+    finally:
+        if owns_connection:
+            conn.close()
 
 def compact_json(value: Any) -> str:
     return json.dumps(value, separators=(",", ":"))
@@ -106,23 +260,6 @@ def close_db(cursor, conn) -> None:
         cursor.close()
     if conn:
         conn.close()
-
-def ensure_user_table_compatibility(cursor, conn):
-    cursor.execute(
-        """
-        SELECT CHARACTER_MAXIMUM_LENGTH AS max_len
-        FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_SCHEMA = %s
-          AND TABLE_NAME = 'user'
-          AND COLUMN_NAME = 'password_hash'
-        """,
-        (app.config["DB_NAME"],),
-    )
-    row = cursor.fetchone()
-    max_len = int(row["max_len"]) if row and row.get("max_len") else 0
-    if max_len and max_len < 128:
-        cursor.execute("ALTER TABLE `user` MODIFY password_hash VARCHAR(255) NOT NULL")
-        conn.commit()
 
 def get_normalized_extension(filename: str) -> str:
     lowered = filename.lower()
@@ -832,7 +969,7 @@ def predict_mri(mri_path: str, user_id: int) -> tuple[float, list[float], str, s
     )
 
 def get_or_create_processed_input(cursor, user_id: int) -> int:
-    cursor.execute("SELECT input_id FROM processed_input WHERE user_id = %s", (user_id,))
+    cursor.execute("SELECT input_id FROM processed_input WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
     if row:
         return row["input_id"]
@@ -840,7 +977,7 @@ def get_or_create_processed_input(cursor, user_id: int) -> int:
     cursor.execute(
         """
         INSERT INTO processed_input (user_id, fused_feature_vector)
-        VALUES (%s, %s)
+        VALUES (?, ?)
         """,
         (user_id, compact_json({})),
     )
@@ -850,7 +987,7 @@ def get_or_create_model(cursor, model_name: str, model_type: str) -> int:
     cursor.execute(
         """
         SELECT model_id FROM model
-        WHERE model_name = %s AND model_type = %s
+        WHERE model_name = ? AND model_type = ?
         ORDER BY model_id DESC LIMIT 1
         """,
         (model_name, model_type),
@@ -862,7 +999,7 @@ def get_or_create_model(cursor, model_name: str, model_type: str) -> int:
     cursor.execute(
         """
         INSERT INTO model (model_name, model_type, model_status, trained_date)
-        VALUES (%s, %s, 'ACTIVE', CURDATE())
+        VALUES (?, ?, 'ACTIVE', date('now'))
         """,
         (model_name, model_type),
     )
@@ -870,42 +1007,43 @@ def get_or_create_model(cursor, model_name: str, model_type: str) -> int:
 
 def upsert_processed_modality(cursor, input_id: int, modality: str, raw_path: str, mime_value: str):
     cfg = MODALITY_DB_CONFIG[modality]
-    cursor.execute(f"SELECT {cfg['pk']} FROM {cfg['table']} WHERE input_id = %s", (input_id,))
+    cursor.execute(f"SELECT {cfg['pk']} FROM {cfg['table']} WHERE input_id = ?", (input_id,))
     if cursor.fetchone():
-        update_parts = [f"{cfg['raw_path_col']} = %s"]
+        update_parts = [f"{cfg['raw_path_col']} = ?"]
         params: list[Any] = [raw_path]
         if cfg["mime_col"]:
-            update_parts.append(f"{cfg['mime_col']} = %s")
+            update_parts.append(f"{cfg['mime_col']} = ?")
             params.append(mime_value)
         if cfg["processed_path_col"]:
             update_parts.append(f"{cfg['processed_path_col']} = NULL")
         update_parts.extend(
             [
-                "feature_vector = %s",
+                "feature_vector = ?",
                 "model_id = NULL",
                 "processed_at = CURRENT_TIMESTAMP",
+                "created_at = CURRENT_TIMESTAMP",
             ]
         )
         params.append(compact_json([]))
         params.append(input_id)
         cursor.execute(
-            f"UPDATE {cfg['table']} SET {', '.join(update_parts)} WHERE input_id = %s",
+            f"UPDATE {cfg['table']} SET {', '.join(update_parts)} WHERE input_id = ?",
             tuple(params),
         )
         return
 
     columns = ["input_id", cfg["raw_path_col"]]
-    values = ["%s", "%s"]
+    values = ["?", "?"]
     params = [input_id, raw_path]
     if cfg["mime_col"]:
         columns.append(cfg["mime_col"])
-        values.append("%s")
+        values.append("?")
         params.append(mime_value)
     if cfg["processed_path_col"]:
         columns.append(cfg["processed_path_col"])
         values.append("NULL")
     columns.extend(["feature_vector", "model_id"])
-    values.extend(["%s", "NULL"])
+    values.extend(["?", "NULL"])
     params.append(compact_json([]))
     cursor.execute(
         f"INSERT INTO {cfg['table']} ({', '.join(columns)}) VALUES ({', '.join(values)})",
@@ -924,32 +1062,37 @@ def update_modality_inference(
     update_parts = []
     params: list[Any] = []
     if cfg["processed_path_col"] and processed_path is not None:
-        update_parts.append(f"{cfg['processed_path_col']} = %s")
+        update_parts.append(f"{cfg['processed_path_col']} = ?")
         params.append(processed_path)
     update_parts.extend(
         [
-            "feature_vector = %s",
-            "model_id = %s",
+            "feature_vector = ?",
+            "model_id = ?",
             "processed_at = CURRENT_TIMESTAMP",
         ]
     )
     params.extend([compact_json(feature_vector), model_id, input_id])
     cursor.execute(
-        f"UPDATE {cfg['table']} SET {', '.join(update_parts)} WHERE input_id = %s",
+        f"UPDATE {cfg['table']} SET {', '.join(update_parts)} WHERE input_id = ?",
         tuple(params),
     )
 
 def upsert_modality_prediction(cursor, input_id: int, model_id: int, modality_type: str, probability: float):
+    # SQLite's equivalent of MySQL's "ON DUPLICATE KEY UPDATE" is
+    # "ON CONFLICT(...) DO UPDATE SET ..." -- it needs to name the unique
+    # column(s) that would conflict (here: input_id + modality_type,
+    # which together are this table's primary key).
     label = "PD" if probability >= 0.5 else "NON_PD"
     cursor.execute(
         """
         INSERT INTO modality_prediction (input_id, model_id, modality_type, predicted_label, confidence_score)
-        VALUES (%s, %s, %s, %s, %s)
-        ON DUPLICATE KEY UPDATE
-            model_id = VALUES(model_id),
-            predicted_label = VALUES(predicted_label),
-            confidence_score = VALUES(confidence_score),
-            predicted_at = CURRENT_TIMESTAMP
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(input_id, modality_type) DO UPDATE SET
+            model_id = excluded.model_id,
+            predicted_label = excluded.predicted_label,
+            confidence_score = excluded.confidence_score,
+            predicted_at = CURRENT_TIMESTAMP,
+            created_at = CURRENT_TIMESTAMP
         """,
         (input_id, model_id, modality_type, label, round(probability, 4)),
     )
@@ -960,27 +1103,30 @@ def clear_missing_modality_predictions(cursor, input_id: int, present_modalities
     if not missing:
         return
 
-    placeholders = ", ".join(["%s"] * len(missing))
+    placeholders = ", ".join(["?"] * len(missing))
     cursor.execute(
         f"""
         DELETE FROM modality_prediction
-        WHERE input_id = %s
+        WHERE input_id = ?
           AND modality_type IN ({placeholders})
         """,
         (input_id, *sorted(missing)),
     )
 
 def upsert_prediction(cursor, user_id: int, input_id: int, model_id: int, probability: float):
+    # unique on user_id (this app keeps one "current" prediction per user)
     label = "PD" if probability >= 0.5 else "NON_PD"
     cursor.execute(
         """
         INSERT INTO prediction (user_id, input_id, model_id, prediction_result, confidence_score)
-        VALUES (%s, %s, %s, %s, %s)
-        ON DUPLICATE KEY UPDATE
-            model_id = VALUES(model_id),
-            prediction_result = VALUES(prediction_result),
-            confidence_score = VALUES(confidence_score),
-            predicted_at = CURRENT_TIMESTAMP
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            input_id = excluded.input_id,
+            model_id = excluded.model_id,
+            prediction_result = excluded.prediction_result,
+            confidence_score = excluded.confidence_score,
+            predicted_at = CURRENT_TIMESTAMP,
+            created_at = CURRENT_TIMESTAMP
         """,
         (user_id, input_id, model_id, label, round(probability, 4)),
     )
@@ -990,7 +1136,7 @@ def get_prediction_id(cursor, user_id: int, input_id: int) -> int:
         """
         SELECT prediction_id
         FROM prediction
-        WHERE user_id = %s AND input_id = %s
+        WHERE user_id = ? AND input_id = ?
         LIMIT 1
         """,
         (user_id, input_id),
@@ -1045,12 +1191,13 @@ def upsert_report(
     cursor.execute(
         """
         INSERT INTO report (user_id, prediction_id, report_summary, report_data)
-        VALUES (%s, %s, %s, %s)
-        ON DUPLICATE KEY UPDATE
-            prediction_id = VALUES(prediction_id),
-            report_summary = VALUES(report_summary),
-            report_data = VALUES(report_data),
-            report_date = CURRENT_TIMESTAMP
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            prediction_id = excluded.prediction_id,
+            report_summary = excluded.report_summary,
+            report_data = excluded.report_data,
+            report_date = CURRENT_TIMESTAMP,
+            created_at = CURRENT_TIMESTAMP
         """,
         (user_id, prediction_id, report_summary, compact_json(report_payload)),
     )
@@ -1059,8 +1206,8 @@ def get_user_profile(cursor, user_id: int) -> dict[str, Any]:
     cursor.execute(
         """
         SELECT user_id, name, email, age
-        FROM `user`
-        WHERE user_id = %s
+        FROM user
+        WHERE user_id = ?
         LIMIT 1
         """,
         (user_id,),
@@ -1189,10 +1336,10 @@ def update_report_pdf_path(cursor, user_id: int, prediction_id: int, report_pdf_
     cursor.execute(
         """
         UPDATE report
-        SET prediction_id = %s,
-            report_pdf_path = %s,
+        SET prediction_id = ?,
+            report_pdf_path = ?,
             report_date = CURRENT_TIMESTAMP
-        WHERE user_id = %s
+        WHERE user_id = ?
         """,
         (prediction_id, report_pdf_path, user_id),
     )
@@ -1201,9 +1348,9 @@ def update_fused_features(cursor, input_id: int, payload: dict[str, Any]):
     cursor.execute(
         """
         UPDATE processed_input
-        SET fused_feature_vector = %s,
+        SET fused_feature_vector = ?,
             processed_at = CURRENT_TIMESTAMP
-        WHERE input_id = %s
+        WHERE input_id = ?
         """,
         (compact_json(payload), input_id),
     )
@@ -1213,18 +1360,19 @@ def get_upload_status(user_id: int) -> dict[str, Any]:
     cursor = None
     try:
         conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT input_id FROM processed_input WHERE user_id = %s", (user_id,))
+        purge_expired_temp_data(conn)  # clear anything older than 1 hour first
+        cursor = conn.cursor()
+        cursor.execute("SELECT input_id FROM processed_input WHERE user_id = ?", (user_id,))
         row = cursor.fetchone()
         if not row:
             return {"has_input": False}
 
         input_id = row["input_id"]
-        cursor.execute("SELECT voice_id FROM processed_voice WHERE input_id = %s", (input_id,))
+        cursor.execute("SELECT voice_id FROM processed_voice WHERE input_id = ?", (input_id,))
         has_voice = cursor.fetchone() is not None
-        cursor.execute("SELECT mri_id FROM processed_mri WHERE input_id = %s", (input_id,))
+        cursor.execute("SELECT mri_id FROM processed_mri WHERE input_id = ?", (input_id,))
         has_mri = cursor.fetchone() is not None
-        cursor.execute("SELECT handwriting_id FROM processed_handwriting WHERE input_id = %s", (input_id,))
+        cursor.execute("SELECT handwriting_id FROM processed_handwriting WHERE input_id = ?", (input_id,))
         has_handwriting = cursor.fetchone() is not None
 
         return {
@@ -1244,7 +1392,8 @@ def get_latest_prediction(user_id: int) -> dict[str, Any] | None:
     cursor = None
     try:
         conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
+        purge_expired_temp_data(conn)  # clear anything older than 1 hour first
+        cursor = conn.cursor()
         cursor.execute(
             """
             SELECT pi.input_id,
@@ -1257,7 +1406,7 @@ def get_latest_prediction(user_id: int) -> dict[str, Any] | None:
             LEFT JOIN prediction p ON p.input_id = pi.input_id
             LEFT JOIN processed_mri pm ON pm.input_id = pi.input_id
             LEFT JOIN report r ON r.user_id = pi.user_id
-            WHERE pi.user_id = %s
+            WHERE pi.user_id = ?
             """,
             (user_id,),
         )
@@ -1270,7 +1419,7 @@ def get_latest_prediction(user_id: int) -> dict[str, Any] | None:
             """
             SELECT modality_type, predicted_label, confidence_score
             FROM modality_prediction
-            WHERE input_id = %s
+            WHERE input_id = ?
             """,
             (input_id,),
         )
@@ -1334,7 +1483,8 @@ def get_report_data(user_id: int) -> dict[str, Any] | None:
     cursor = None
     try:
         conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
+        purge_expired_temp_data(conn)  # clear anything older than 1 hour first
+        cursor = conn.cursor()
         cursor.execute(
             """
             SELECT u.user_id,
@@ -1355,7 +1505,7 @@ def get_report_data(user_id: int) -> dict[str, Any] | None:
             JOIN prediction p ON p.input_id = pi.input_id
             LEFT JOIN report r ON r.user_id = u.user_id
             LEFT JOIN processed_mri pm ON pm.input_id = pi.input_id
-            WHERE u.user_id = %s
+            WHERE u.user_id = ?
             LIMIT 1
             """,
             (user_id,),
@@ -1368,7 +1518,7 @@ def get_report_data(user_id: int) -> dict[str, Any] | None:
             """
             SELECT modality_type, predicted_label, confidence_score
             FROM modality_prediction
-            WHERE input_id = %s
+            WHERE input_id = ?
             """,
             (row["input_id"],),
         )
@@ -1464,9 +1614,8 @@ def signup():
         cursor = None
         try:
             conn = get_db_connection()
-            cursor = conn.cursor(dictionary=True)
-            ensure_user_table_compatibility(cursor, conn)
-            cursor.execute("SELECT user_id FROM `user` WHERE email = %s", (email,))
+            cursor = conn.cursor()
+            cursor.execute("SELECT user_id FROM user WHERE email = ?", (email,))
             if cursor.fetchone():
                 flash("An account with that email already exists.", "error")
                 return render_template("signup.html")
@@ -1474,8 +1623,8 @@ def signup():
             password_hash = generate_password_hash(password)
             cursor.execute(
                 """
-                INSERT INTO `user` (name, email, age, password_hash)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO user (name, email, age, password_hash)
+                VALUES (?, ?, ?, ?)
                 """,
                 (name, email, age_value, password_hash),
             )
@@ -1500,9 +1649,9 @@ def login():
         cursor = None
         try:
             conn = get_db_connection()
-            cursor = conn.cursor(dictionary=True)
+            cursor = conn.cursor()
             cursor.execute(
-                "SELECT user_id, name, email, password_hash FROM `user` WHERE email = %s",
+                "SELECT user_id, name, email, password_hash FROM user WHERE email = ?",
                 (email,),
             )
             user = cursor.fetchone()
@@ -1562,7 +1711,8 @@ def predict():
         cursor = None
         try:
             conn = get_db_connection()
-            cursor = conn.cursor(dictionary=True)
+            purge_expired_temp_data(conn)  # clear anything older than 1 hour first
+            cursor = conn.cursor()
 
             input_id = get_or_create_processed_input(cursor, session["user_id"])
 
@@ -1664,18 +1814,5 @@ def predict():
     return render_template("predict.html", status=status, result=result)
 
 if __name__ == "__main__":
+    init_db()  # creates app_data.db and all tables on first run, if they don't exist yet
     app.run(debug=True)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
