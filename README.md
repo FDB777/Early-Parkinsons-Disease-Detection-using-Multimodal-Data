@@ -4,6 +4,8 @@ A research and educational Flask application that combines voice recordings, han
 
 > **Important:** This project is not a medical device and must not be used to diagnose, treat, or make clinical decisions about any person. Predictions require clinical validation and qualified medical interpretation.
 
+## Live demo
+https://early-parkinsons-disease-detection-using.onrender.com/
 ## Features
 
 - Accepts one or more input modalities: voice (`.wav`), handwriting (`.jpg`, `.jpeg`, `.png`), and MRI (`.jpg`, `.jpeg`, `.png`, `.nii`, `.nii.gz`).
