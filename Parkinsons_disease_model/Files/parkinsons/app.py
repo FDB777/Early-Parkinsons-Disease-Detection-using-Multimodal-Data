@@ -231,7 +231,19 @@ def init_db():
         conn.commit()
     finally:
         conn.close()
+    cursor = conn.cursor()
 
+    cursor.execute(
+        """
+        INSERT OR IGNORE INTO user
+        (user_id, name, email, age, password_hash)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (1, "Demo User", "you@example.com", 25, "1234")
+    )
+    
+    conn.commit()
+    
 
 # Every TEMPORARY table (not `user`, not `model` -- those are permanent)
 TEMP_TABLES = [
