@@ -1,5 +1,5 @@
 from __future__ import annotations
-from datetime import datetime, UTC
+from datetime import datetime, timezone
 import importlib.util
 import json
 import os
@@ -882,7 +882,7 @@ def section_brain_pd(mask: np.ndarray) -> dict[str, np.ndarray]:
 
 def save_mri_visuals(slice_2d: np.ndarray, heatmap: np.ndarray, prefix: str) -> tuple[str, str, str, str]:
     os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
-    timestamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S%f")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
     occlusion_filename = f"{prefix}_{timestamp}_mri_occlusion.png"
     template_filename = f"{prefix}_{timestamp}_mri_template.png"
     occlusion_abs_path = os.path.join(app.config["UPLOAD_FOLDER"], occlusion_filename)
@@ -1243,7 +1243,7 @@ def generate_report_pdf(
 ) -> str:
     reports_dir = os.path.join(BASE_DIR, "static", "reports")
     os.makedirs(reports_dir, exist_ok=True)
-    timestamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S%f")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
     pdf_filename = f"report_u{user_data['user_id']}_{timestamp}.pdf"
     abs_pdf_path = os.path.join(reports_dir, pdf_filename)
 
