@@ -230,9 +230,10 @@ def init_db():
         )
         conn.commit()
     finally:
-        conn.close()
-    cursor = conn.cursor()
+    conn.close()
 
+    cursor = conn.cursor()
+    
     cursor.execute(
         """
         INSERT OR IGNORE INTO user
