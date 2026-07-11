@@ -1,4 +1,7 @@
 from __future__ import annotations
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 from datetime import datetime, timezone
 import importlib.util
 import json
@@ -29,9 +32,7 @@ from reportlab.pdfgen import canvas
 from tensorflow.keras.models import Model, load_model
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
-import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
