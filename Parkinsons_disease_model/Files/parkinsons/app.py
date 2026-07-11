@@ -230,7 +230,7 @@ def init_db():
         )
         conn.commit()
     finally:
-    conn.close()
+        conn.close()
 
     cursor = conn.cursor()
     
