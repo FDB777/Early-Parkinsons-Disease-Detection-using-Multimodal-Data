@@ -1815,7 +1815,6 @@ def predict():
     status = get_upload_status(session["user_id"])
     result = get_latest_prediction(session["user_id"])
     return render_template("predict.html", status=status, result=result)
-
-if __name__ == "__main__":
-    init_db()  # creates app_data.db and all tables on first run, if they don't exist yet
+init_db()
+if __name__ == "__main__":  # creates app_data.db and all tables on first run, if they don't exist yet
     app.run(debug=True)
