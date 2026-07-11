@@ -32,7 +32,10 @@ from werkzeug.utils import secure_filename
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 app = Flask(__name__)
-app.secret_key = "dev-secret-key-change-if-needed"
+app.secret_key = os.getenv(
+    "SECRET_KEY",
+    "dev-secret-key-change-if-needed"
+)
 app.config["UPLOAD_FOLDER"] = "static/uploads"
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
 app.config["DB_PATH"] = os.getenv("DB_PATH", os.path.join(BASE_DIR, "app_data.db"))
